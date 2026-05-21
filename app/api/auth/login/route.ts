@@ -32,7 +32,7 @@ export async function POST(req: Request) {
 
     response.cookies.set('dte_admin_session', createAdminSessionValue(safeUser), {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: false, // Changed from process.env.NODE_ENV === 'production' to false to support HTTP VPS
       sameSite: 'lax',
       path: '/',
       maxAge: 60 * 60 * 12,
