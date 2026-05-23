@@ -24,6 +24,10 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
+    if (order.total < 0) {
+      return NextResponse.json({ error: 'Payment records cannot be manually cleared.' }, { status: 400 });
+    }
+
     const updatedOrder = await prisma.order.update({
       where: { orderId: id },
       data: {
