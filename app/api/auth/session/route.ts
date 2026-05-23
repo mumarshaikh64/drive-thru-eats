@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+
+export const dynamic = 'force-dynamic';
 import { parseAdminSessionValue } from '@/lib/admin-session';
 
 export async function GET() {

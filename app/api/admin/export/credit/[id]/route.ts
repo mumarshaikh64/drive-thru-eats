@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { parseAdminSessionValue } from '@/lib/admin-session';
 import { cookies } from 'next/headers';
+
+export const dynamic = 'force-dynamic';
 import * as XLSX from 'xlsx';
 
 export async function GET(req: Request, { params }: { params: { id: string } }) {
@@ -24,93 +26,87 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
       return new Response('Reference order not found', { status: 404 });
     }
 
-    const customerPhone = refOrder.credit_phone || refOrder.phone;
-    const customerName = refOrder.credit_customer_name || refOrder.customerName;
-    const companyName = refOrder.credit_company_name || 'N/A';
+    const customerPhone = refOrder.credit_phone || refOrder.phone || 'N/A';
+    const customerName = refOrder.credit_customer_name || refOrder.customerName || 'N/A';
+    const companyName = refOrder.credit_company_name || 'Individual';
 
-    // Fetch all credit orders for this customer (cleared or pending, including deleted-from-view ones)
-    const creditOrders = await prisma.order.findMany({
-      where: {
-        payment_type: 'credit',
-        OR: [
-          { credit_phone: customerPhone },
-          { phone: customerPhone }
-        ]
-      },
-      orderBy: { timestamp: 'desc' }
-    });
+    const isPayment = refOrder.total < 0;
+    const absTotal = Math.abs(refOrder.total);
 
     // Prepare Customer Info Metadata rows
-    const customerInfo = [
+    const txInfo = [
+      { A: 'Transaction ID:', B: refOrder.orderId },
+      { A: 'Date & Time:', B: new Date(refOrder.timestamp).toLocaleString('en-IN') },
+      { A: 'Transaction Type:', B: isPayment ? 'PAYMENT RECEIVED' : `CREDIT ORDER (${refOrder.type || 'Dining'})` },
       { A: 'Customer Name:', B: customerName },
       { A: 'Company Name:', B: companyName },
       { A: 'Phone Number:', B: customerPhone },
-      { A: 'Total Orders:', B: creditOrders.length },
-      { A: 'Total Credit:', B: creditOrders.reduce((sum, o) => sum + o.total, 0) },
-      { A: 'Pending Credit:', B: creditOrders.filter(o => o.credit_status !== 'cleared').reduce((sum, o) => sum + o.total, 0) },
-      { A: 'Cleared Credit:', B: creditOrders.filter(o => o.credit_status === 'cleared').reduce((sum, o) => sum + o.total, 0) },
+      { A: 'Status:', B: refOrder.credit_status?.toUpperCase() || 'PENDING' },
       { A: '', B: '' } // blank spacer row
     ];
 
-    // Prepare history table data
-    const historyRows = creditOrders.map((co, index) => {
-      let itemsStr = '';
-      try {
-        const items = typeof co.items === 'string' ? JSON.parse(co.items) : co.items;
-        itemsStr = Array.isArray(items)
-          ? items.map((it: any) => `${it.quantity}x ${it.name}`).join(', ')
-          : '';
-      } catch {
-        itemsStr = 'Error parsing items';
-      }
+    // Prepare table data
+    let itemsList: any[] = [];
+    try {
+      itemsList = typeof refOrder.items === 'string' ? JSON.parse(refOrder.items || '[]') : refOrder.items;
+      if (!Array.isArray(itemsList)) itemsList = [];
+    } catch {
+      itemsList = [];
+    }
 
-      const dateObj = new Date(co.timestamp);
-      const date = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
-      const time = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-
-      return {
-        'S.No': index + 1,
-        'Order ID': co.orderId,
-        'Date': date,
-        'Time': time,
-        'Items Ordered': itemsStr,
-        'Total Amount (INR)': co.total,
-        'Status': co.credit_status?.toUpperCase() || 'PENDING'
-      };
-    });
+    const itemRows = isPayment
+      ? [{
+          'S.No': 1,
+          'Item Name': itemsList[0]?.name || 'Payment received',
+          'Quantity': 1,
+          'Rate (INR)': absTotal,
+          'Amount (INR)': absTotal
+        }]
+      : itemsList.map((it: any, index: number) => ({
+          'S.No': index + 1,
+          'Item Name': it.name,
+          'Quantity': it.quantity,
+          'Rate (INR)': it.price != null ? it.price : 0,
+          'Amount (INR)': it.price != null ? (it.price * it.quantity) : 0
+        }));
 
     const workbook = XLSX.utils.book_new();
 
     // Convert metadata array
-    const worksheet = XLSX.utils.json_to_sheet(customerInfo, { skipHeader: true });
+    const worksheet = XLSX.utils.json_to_sheet(txInfo, { skipHeader: true });
     
     // Append table headers and rows starting from row 10 (index 9)
-    XLSX.utils.sheet_add_json(worksheet, historyRows, { origin: 'A10' });
+    XLSX.utils.sheet_add_json(worksheet, itemRows, { origin: 'A10' });
+
+    // Append total row
+    const totalRowIndex = 10 + itemRows.length + 1;
+    XLSX.utils.sheet_add_json(worksheet, [
+      { A: '', B: '', C: '', D: 'Total Amount (INR):', E: absTotal }
+    ], { origin: `A${totalRowIndex}`, skipHeader: true });
 
     // Set column widths
     worksheet['!cols'] = [
       { wch: 18 }, // A: S.No or Info Key
-      { wch: 18 }, // B: Order ID or Info Val
-      { wch: 15 }, // C: Date
-      { wch: 15 }, // D: Time
-      { wch: 50 }, // E: Items Ordered
-      { wch: 20 }, // F: Total Amount
-      { wch: 15 }, // G: Status
+      { wch: 30 }, // B: Item Name or Info Val
+      { wch: 12 }, // C: Quantity
+      { wch: 15 }, // D: Rate
+      { wch: 18 }, // E: Amount
     ];
 
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Credit History');
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Transaction Details');
 
     const buf = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
     const safeName = customerName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const prefix = isPayment ? 'payment' : 'credit';
     return new Response(buf, {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'Content-Disposition': `attachment; filename="credit_${safeName}_history.xlsx"`
+        'Content-Disposition': `attachment; filename="${prefix}_${refOrder.orderId}_${safeName}.xlsx"`
       }
     });
   } catch (error: any) {
     console.error("Export credit history error:", error);
-    return new Response('Failed to export history: ' + error.message, { status: 500 });
+    return new Response('Failed to export transaction: ' + error.message, { status: 500 });
   }
 }

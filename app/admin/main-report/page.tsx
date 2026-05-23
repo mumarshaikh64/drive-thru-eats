@@ -63,6 +63,10 @@ export default function MainReportPage() {
         limit: limit.toString(),
       });
       const res = await fetch(`/api/admin/main-report?${queryParams.toString()}`);
+      if (res.status === 401) {
+        window.location.href = '/admin/login';
+        return;
+      }
       if (!res.ok) {
         throw new Error('Failed to fetch master report data');
       }

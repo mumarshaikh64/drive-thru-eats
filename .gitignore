@@ -70,6 +70,8 @@ Desktop.ini
 /scratch_debug_prisma.ts
 /seed_staff.js
 /theme.css
+/test-query*.js
+/test-route.js
 
 # Local editor/session artifacts
 /.history/

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { parseAdminSessionValue } from '@/lib/admin-session';
 import { cookies } from 'next/headers';
+
+export const dynamic = 'force-dynamic';
 import * as XLSX from 'xlsx';
 
 export async function GET(req: Request) {
@@ -34,9 +36,18 @@ export async function GET(req: Request) {
     });
 
     // Categorize orders
-    const cashOrders = allOrders.filter(o => o.payment_type === 'cash' || o.paymentMethod?.toLowerCase().includes('cash'));
-    const upiOrders = allOrders.filter(o => o.payment_type === 'upi' || o.paymentMethod?.toLowerCase().includes('upi') || o.paymentMethod?.toLowerCase().includes('online') || o.paymentMethod?.toLowerCase().includes('g-pay') || o.paymentMethod?.toLowerCase().includes('m-pay'));
-    const creditOrders = allOrders.filter(o => o.payment_type === 'credit' || o.paymentMethod?.toLowerCase().includes('credit'));
+    const cashOrders = allOrders.filter(o => {
+      const pmStr = o.paymentMethod?.toLowerCase() || '';
+      return o.payment_type === 'cash' || pmStr.includes('cash');
+    });
+    const upiOrders = allOrders.filter(o => {
+      const pmStr = o.paymentMethod?.toLowerCase() || '';
+      return o.payment_type === 'upi' || pmStr.includes('upi') || pmStr.includes('online') || pmStr.includes('g-pay') || pmStr.includes('m-pay');
+    });
+    const creditOrders = allOrders.filter(o => {
+      const pmStr = o.paymentMethod?.toLowerCase() || '';
+      return o.payment_type === 'credit' || pmStr.includes('credit');
+    });
 
     // Create summary rows
     const summaryData = [
